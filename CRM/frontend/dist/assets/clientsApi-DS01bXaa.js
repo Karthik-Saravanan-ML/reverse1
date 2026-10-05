@@ -1,0 +1,1 @@
+import{b as s}from"./createLucideIcon-D1bcffr6.js";const o={getClients:async(n={})=>{const a=await s.get("/clients/organizations",{params:{size:100,...n}});return(Array.isArray(a.data)?a.data:a.data.content).map(t=>({...t,companyName:t.name}))}};export{o as c};

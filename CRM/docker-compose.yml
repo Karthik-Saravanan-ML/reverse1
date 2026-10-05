@@ -1,0 +1,118 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: crm-postgres
+    environment:
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: rustfs/rustfs:latest
+    container_name: crm-minio
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${MINIO_SECRET_KEY}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: crm-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    container_name: crm-backend
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRY_MS:-86400000}
+      MINIO_URL: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      AI_SERVICE_URL: http://ai-service:8001
+      AI_SERVICE_INTERNAL_KEY: ${INTERNAL_SERVICE_KEY:-local-dev-only-key-change-before-sharing}
+      MAIL_HOST: ${MAIL_HOST:-localhost}
+      MAIL_PORT: ${MAIL_PORT:-25}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
+  ai-service:
+    build:
+      context: ./ai-service
+    container_name: crm-ai-service
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USERNAME}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      SYNC_DATABASE_URL: postgresql://${DB_USERNAME}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET:-crm-documents}
+      JWT_SECRET: ${JWT_SECRET}
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-local-dev-only-key-change-before-sharing}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      BACKEND_URL: http://backend:8080
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: crm-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  minio_data:
+  ollama_data:
